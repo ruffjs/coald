@@ -1,5 +1,7 @@
 #! /bin/bash
 
+# 用于测试，模拟设备上的 ubus，测试时将该文件改为可执行权限，并放到 $PATH 中
+
 function listenBtn() {
   path=$1
   while true; do
