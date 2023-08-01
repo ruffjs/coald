@@ -2,28 +2,6 @@ package main
 
 // shadow  message definitions
 // reference to aws iot
-import (
-	"time"
-)
-
-type Shadow struct {
-	ThingId  string    `json:"thingId"`
-	State    StateDR   `json:"state"`
-	Metadata Metadata  `json:"metadata"`
-	Version  int64     `json:"version"`
-	Tags     TagsValue `json:"tags"`
-
-	UpdatedAt time.Time `json:"updatedAt"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
-type ShadowWithStatus struct {
-	Connected      *bool      `json:"connected,omitempty"`
-	ConnectedAt    *time.Time `json:"connectedAt,omitempty"`
-	DisconnectedAt *time.Time `json:"disconnectedAt,omitempty"`
-	RemoteAddr     string     `json:"remoteAddr,omitempty"`
-	Shadow
-}
 
 // ErrResp Error response document
 // code — An HTTP response code that indicates the type of error.
@@ -51,13 +29,6 @@ type StateReq struct {
 	State       StateDR `json:"state"`
 	ClientToken string  `json:"clientToken"`
 	Version     int64   `json:"version"`
-}
-
-// TagsReq Publish a request state document to set tag for the device's shadow
-// version — If used, the Device Shadow service processes the update only if the specified version matches the latest version it has.
-type TagsReq struct {
-	Tags    TagsValue `json:"tags"`
-	Version int64     `json:"version"`
 }
 
 // GetReq Publish a request to get device's shadow
@@ -168,4 +139,11 @@ type MethodResp struct {
 type MethodReq struct {
 	ClientToken string `json:"clientToken,omitempty"`
 	Data        any    `json:"data,omitempty"`
+}
+
+// ----------------------------------------------------------------
+
+type StatusMsg struct {
+	Csq int  `json:"csq"`
+	Btn bool `json:"btn"`
 }

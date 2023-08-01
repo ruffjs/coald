@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"ruff.io/coald/pkg/log"
@@ -13,58 +18,96 @@ import (
 
 const (
 	DefaultQos = 1
-
-	host = "localhost"
-	port = 1883
 )
 
-var (
-	thingId  = "example"
-	password = "example"
+type Opts struct {
+	host     string
+	port     int
+	thingId  string
+	password string
 
-	state = map[string]any{
-		"csq":   0,
-		"power": false,
-	}
+	thingIdOfCtrl string
+	isCtrlNode    bool
+	isExecNode    bool
+}
+
+var (
+	opts Opts
 )
 
 var mqttClient mqtt.Client
 
-func main() {
-	start()
-	select {}
+func init() {
+	flag.StringVar(&opts.host, "h", "", "MQTT服务地址，域名或IP")
+	flag.IntVar(&opts.port, "p", 1883, "MQTT 服务端口")
+	flag.StringVar(&opts.thingId, "i", "", "当前设备的 thingId")
+	flag.StringVar(&opts.password, "s", "", "当前设备的接入密码")
+	flag.StringVar(&opts.thingIdOfCtrl, "ci", "", "控制端的设备 thingId, 作为受控端时必需提供该值")
+	flag.BoolVar(&opts.isCtrlNode, "c", false, "是否为控制端")
+	flag.BoolVar(&opts.isExecNode, "e", false, "是否为受控执行端")
+	flag.Parse()
+	if opts.host == "" || opts.thingId == "" || opts.password == "" {
+		log.Fatal("host, thingId and password must be provided")
+	}
+	if opts.isExecNode && opts.thingIdOfCtrl == "" {
+		log.Fatal("must provide thingId of controller when this node is execute node")
+	}
+
+	log.Infof("option: %#v", opts)
 }
 
-func start() {
-	retryConn()
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		if sig := signalHandler(ctx); sig != nil {
+			cancel()
+			log.Info(fmt.Sprintf("shutdown by signal: %s", sig))
+		}
+	}()
+
+	start(ctx)
+
+	<-ctx.Done()
+	time.Sleep(time.Second) // wait for clean
+}
+
+func start(ctx context.Context) {
+	retryConnMqtt(ctx)
+	go syncStatusLoop(ctx)
+	if opts.isCtrlNode {
+		go m2mCtlLoop(ctx, opts.thingId, mqttClient)
+	}
 }
 func subscribe() {
 	// Subscribe shadow topics and direct method invoke topic
 	receiveShadowUpdateResp()
 	receiveDirectMethodInvoke()
-
-	// Report the current state of light when it boot, then server can get it's state by query Shadow
-	// updateShadowReported(state)
+	if opts.isExecNode {
+		subscribeM2M(mqttClient, opts.thingIdOfCtrl)
+	}
 }
 
-func retryConn() {
+func retryConnMqtt(ctx context.Context) {
 	for {
-		if err := connectTioByMqtt(); err != nil {
+		if err := connectTioByMqtt(opts); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			time.Sleep(time.Second * 10)
 		} else {
-			break
+			return
 		}
 	}
 }
 
-func connectTioByMqtt() error {
-	brk := fmt.Sprintf("tcp://%s:%d", host, port)
+func connectTioByMqtt(opt Opts) error {
+	brk := fmt.Sprintf("tcp://%s:%d", opt.host, opt.port)
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(brk)
-	opts.SetClientID(thingId)
-	opts.SetUsername(thingId)
-	opts.SetPassword(password)
+	opts.SetClientID(opt.thingId)
+	opts.SetUsername(opt.thingId)
+	opts.SetPassword(opt.password)
 
 	opts.OnConnect = func(c mqtt.Client) {
 		log.Info("Mqtt connected")
@@ -86,7 +129,7 @@ func connectTioByMqtt() error {
 func receiveShadowUpdateResp() error {
 	log.Info("[Receive Shadow Update Response] subscribe")
 
-	topicReq := fmt.Sprintf("$iothub/things/%s/shadows/name/default/update/+", thingId)
+	topicReq := fmt.Sprintf("$iothub/things/%s/shadows/name/default/update/+", opts.thingId)
 	accepted := "accepted"
 	rejected := "rejected"
 
@@ -122,17 +165,19 @@ func receiveShadowUpdateResp() error {
 
 // updateShadowReported Report device state by update `Shadow desired`
 func updateShadowReported(payload map[string]any) {
-	log.Infof("[LightState] Report shadow desired: power: %s, brightness: %v",
-		state["power"], state["brightness"])
+	log.Infof("[Set Shadow Reported] raw: %v", payload)
 
 	r := StateReq{
 		ClientToken: fmt.Sprintf("tk-%d", time.Now().UnixMicro()),
 		State:       StateDR{Reported: payload},
 	}
 	reqJson, _ := json.Marshal(r)
-	log.Infof("[Set Shadow Reported] \n%s", toJsonStr(r))
-	topic := fmt.Sprintf("$iothub/things/%s/shadows/name/default/update", thingId)
-	mqttClient.Publish(topic, DefaultQos, false, reqJson)
+	topic := fmt.Sprintf("$iothub/things/%s/shadows/name/default/update", opts.thingId)
+	tk := mqttClient.Publish(topic, DefaultQos, false, reqJson)
+	tk.Wait()
+	if tk.Error() != nil {
+		log.Errorf("[Set Shadow Reported] mqtt publish error: %s", tk.Error())
+	}
 }
 
 // receiveDirectMethodInvoke
@@ -142,7 +187,7 @@ func updateShadowReported(payload map[string]any) {
 func receiveDirectMethodInvoke() error {
 	log.Infof("[Receive Method Request] subscribe method request")
 
-	topicReq := fmt.Sprintf("$iothub/things/%s/methods/+/req", thingId)
+	topicReq := fmt.Sprintf("$iothub/things/%s/methods/+/req", opts.thingId)
 
 	tk := mqttClient.Subscribe(topicReq, 0, func(c mqtt.Client, m mqtt.Message) {
 		go func() {
@@ -170,7 +215,7 @@ func receiveDirectMethodInvoke() error {
 
 			b, _ := json.Marshal(resp)
 
-			topicResp := fmt.Sprintf("$iothub/things/%s/methods/%s/resp", thingId, method)
+			topicResp := fmt.Sprintf("$iothub/things/%s/methods/%s/resp", opts.thingId, method)
 			mqttClient.Publish(topicResp, 0, false, b)
 		}()
 	})
@@ -204,18 +249,46 @@ func doMethod(method string, data map[string]any) MethodResp {
 
 func doLightOn() MethodResp {
 	log.Debug("doLightOn")
+	lightOn(true)
 	return MethodResp{Code: 200, Message: "OK"}
 }
 
 func doLightOff() MethodResp {
 	log.Debug("doLightOff")
+	lightOn(false)
 	return MethodResp{Code: 200, Message: "OK"}
 }
 
+func syncStatusLoop(ctx context.Context) {
+	ch := make(chan map[string]any)
+	go onUbusEvent(ctx, ubusStatusEventPath, ch)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e := <-ch:
+			updateShadowReported(map[string]any{
+				"status": e,
+			})
+		}
+	}
+}
+
 func toJsonStr(v any) string {
-	s, err := json.MarshalIndent(v, "", "  ")
+	s, err := json.Marshal(v)
 	if err != nil {
 		log.Fatalf("Marshal value %v error %v", v, err)
 	}
 	return string(s)
+}
+
+func signalHandler(ctx context.Context) error {
+	c := make(chan os.Signal, 2)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGABRT)
+	select {
+	case sig := <-c:
+		return fmt.Errorf("%s", sig)
+	case <-ctx.Done():
+		return nil
+	}
 }

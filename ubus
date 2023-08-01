@@ -1,0 +1,39 @@
+#! /bin/bash
+
+function listenBtn() {
+  path=$1
+  while true; do
+    sleep 5
+    on=$((RANDOM % 2))
+    echo {\"$path\": {\"on\": $on} }
+  done
+}
+
+
+function listenStatus() {
+  path=$1
+  while true; do
+    sleep 10
+    cqs=$((RANDOM % 100))
+    btn=$((RANDOM % 2))
+    echo {\"$path\": {\"btn\": $btn, \"cqs\": $cqs} }
+  done
+}
+
+function send() {
+  echo send $1 $2
+}
+
+case $1 in
+  listen )
+  # echo listen $2
+    if [ "$2" = "ruff/event/btn" ]; then
+      listenBtn $2
+    elif [ "$2" = "ruff/event/status" ]; then
+      listenStatus $2
+    fi
+  ;;
+  send )
+  send $2 $3
+  ;;
+esac
