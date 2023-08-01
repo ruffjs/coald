@@ -8,7 +8,15 @@
 - 可通过服务端远程开关灯 （lighOn / lighOff）
 - M2M，一台设备按钮按下后，远程过期另一台设备的灯
 
-其中，通过 ubus 获取设备状态和控制设备
+## 与 ubus 的集成依赖
+通过 ubus 获取设备状态和控制设备  
+
+设备发布事件：
+- ruff/event/status  {"csq": 33, "btn": 0}
+- ruff/event/btn     {"on": 1} or {"on": 0}
+
+设备接受控制指令
+- ruff/ctrl/lightOn  {"on": 1} or {"on": 0}
 
 ## 构建
 ```bash
