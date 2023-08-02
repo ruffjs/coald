@@ -29,7 +29,12 @@ func m2mCtlLoop(ctx context.Context, thingId string, client mqtt.Client) {
 		case e := <-ch:
 			log.Debugf("[m2m] received event: %v", e)
 			if on, ok := e["on"]; ok {
-				t := (on == 1)
+				t := false
+				if v, ok := on.(float64); ok {
+					t = v == 1
+				} else {
+					log.Warnf("[m2m] received event field is not valid, value on=%v", on)
+				}
 				msg := M2MMsg{Typ: "lightOn", Data: t}
 				b, _ := json.Marshal(msg)
 				log.Debugf("[m2m] to publish control message, topic=%q message=%s", topic, b)
@@ -40,6 +45,8 @@ func m2mCtlLoop(ctx context.Context, thingId string, client mqtt.Client) {
 				} else {
 					log.Debugf("[m2m] publish message success, topic=%q, msg=%s", topic, b)
 				}
+			} else {
+				log.Warnf("[m2m] received event is not valid, has no field \"on\" value=%v", e)
 			}
 		}
 
