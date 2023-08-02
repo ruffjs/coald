@@ -32,6 +32,7 @@ func m2mCtlLoop(ctx context.Context, thingId string, client mqtt.Client) {
 				t := (on == 1)
 				msg := M2MMsg{Typ: "lightOn", Data: t}
 				b, _ := json.Marshal(msg)
+				log.Debugf("[m2m] to publish control message, topic=%q message=%s", topic, b)
 				tk := client.Publish(topic, 1, false, b)
 				tk.Wait()
 				if tk.Error() != nil {
