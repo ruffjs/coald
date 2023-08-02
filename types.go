@@ -141,6 +141,17 @@ type MethodReq struct {
 	Data        any    `json:"data,omitempty"`
 }
 
+type AppMethodReq struct {
+	Method string `json:"method"`
+	Data   any    `json:"data"`
+}
+
+type MethodPingReq struct {
+	ServerSendTime int64 `json:"serverSendTime"`
+	DeviceRecvTime int64 `json:"deviceRecvTime"`
+	DeviceSendTime int64 `json:"deviceSendTime"`
+}
+
 // ----------------------------------------------------------------
 
 type StatusMsg struct {

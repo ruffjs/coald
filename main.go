@@ -196,11 +196,36 @@ func receiveDirectMethodInvoke() error {
 			arr := strings.Split(m.Topic(), "/")
 			method := arr[4]
 			log.Infof("[Receive Method Request] method=%s \n%s", method, m.Payload())
+			rcvTs := time.Now().UnixMilli()
 
 			err := json.Unmarshal(m.Payload(), &req)
 			if err == nil {
 				if m, ok := req.Data.(map[string]any); ok {
-					resp = doMethod(method, m)
+					if method == "app" {
+						s, _ := json.Marshal(m)
+						var appReq AppMethodReq
+						if err := json.Unmarshal(s, &appReq); err != nil {
+							log.Errorf("[Receive Method Request] invalid app method data, data=%s, error=%v", s, err)
+							resp.Code = 400
+							resp.Message = "invalid app method data"
+						} else {
+							resp = doAppMethod(appReq.Method, appReq.Data)
+						}
+					} else if method == "ping" {
+						s, _ := json.Marshal(m)
+						var pingReq MethodPingReq
+						if err := json.Unmarshal(s, &pingReq); err != nil {
+							log.Errorf("[Receive Method Request] invalid ping method data, data=%s, error=%v", s, err)
+							resp.Code = 400
+							resp.Message = "invalid ping method data"
+						} else {
+							pingReq.DeviceRecvTime = rcvTs
+							pingReq.DeviceSendTime = time.Now().UnixMilli()
+							resp.Code = 200
+							resp.Message = "OK"
+							resp.Data = pingReq
+						}
+					}
 					resp.ClientToken = req.ClientToken
 				}
 			} else {
@@ -216,6 +241,7 @@ func receiveDirectMethodInvoke() error {
 			b, _ := json.Marshal(resp)
 
 			topicResp := fmt.Sprintf("$iothub/things/%s/methods/%s/resp", opts.thingId, method)
+			log.Debugf("[Receive Method Request] publish response, topic=%q, data=%s", topicResp, b)
 			mqttClient.Publish(topicResp, 0, false, b)
 		}()
 	})
@@ -234,7 +260,7 @@ app methods:
 	lightOff        	关灯
 `
 
-func doMethod(method string, data map[string]any) MethodResp {
+func doAppMethod(method string, data any) MethodResp {
 	switch method {
 	case "help":
 		return MethodResp{Code: 200, Message: "OK", Data: methodHelp}
@@ -243,7 +269,7 @@ func doMethod(method string, data map[string]any) MethodResp {
 	case "lightOff":
 		return doLightOff()
 	default:
-		return MethodResp{Code: 400, Message: fmt.Sprintf("unknown method %v", method)}
+		return MethodResp{Code: 400, Message: fmt.Sprintf("unknown method %q", method)}
 	}
 }
 
